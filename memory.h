@@ -5,26 +5,23 @@
 
 using namespace std; 
 
+//MODE: ALLOC_FAST (~25ns alloc time)
+template<const size_t MEM_SIZE = 16*1024*1024> 
 class Mem {
-    private: 
-        static constexpr bool       FREE                    = true,
-                                    NOT_FREE                = false; 
-        
-        static constexpr size_t     MEM_SIZE                = 16*1024*1024,
-                                    MIN_BLOCK_SIZE          = 16,
-                                    DEFAULT_BLOCK_SIZE      = 16;
+    private:
 
         struct Block {
             size_t size, offset; 
-            bool free; 
-            Block *prev; 
+            Block *next; 
         }; 
 
-        void *memory;  
-        Block *head; // free block list
+        //                      16,      32,      64,      128,     256,     512,     1024     1024
+        Block *sizeClasses[8] { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr }; 
+        void *memory;
         size_t offset = 0;
+        int8_t currSizeClass = 0; 
 
-        inline void init_allocator() {
+        void init_allocator() {
             memory = mmap(NULL, MEM_SIZE, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 
             if(memory == MAP_FAILED) {
@@ -33,84 +30,64 @@ class Mem {
             }
         }
 
+        inline int8_t get_curr_size_class(size_t size) const {
+            if(size <= 16) return 0; 
+            else if(size <= 32) return 1; 
+            else if(size <= 64) return 2; 
+            else if(size <= 128) return 3; 
+            else if(size <= 256) return 4; 
+            else if(size <= 512) return 5;
+            else if(size <= 1024) return 6;
+            else return 7;
+        }
+  
         Block *create_block(size_t size) {
-            if(offset + sizeof(Block) + size > MEM_SIZE)
-                throw logic_error("alloc error: no more memory space (solution not implemented yet)"); 
-
-            Block *bl = (Block*)((char*)memory + offset);
+            Block *bl = (Block*)((char*)memory + offset); 
 
             bl->size = size; 
-            bl->prev = head;
+            bl->next = nullptr; 
 
-            offset += sizeof(Block) + bl->size; 
-            bl->offset = offset; 
+            offset += sizeof(Block) + size;
+            bl->offset = offset; //start pos of next block
 
             return bl;
         }
 
         Block *first_fit(size_t size) {
-            //check all and find one that fits (or not)
-            if(head->free) {
-                Block *tmp = head; //head == newest Block
+            currSizeClass = get_curr_size_class(size);
 
-                while(tmp->prev != nullptr) {
-                    if(tmp->size >= size && tmp->free) 
-                        return tmp; 
-                    
-                    tmp = tmp->prev; 
-                }
-
-                if(head->prev == nullptr && head->size >= size && head->free)
-                    return head;
+            if(sizeClasses[currSizeClass] != nullptr) {
+                Block *tmp = sizeClasses[currSizeClass];
+                sizeClasses[currSizeClass] = tmp->next;
+                return tmp; 
             }
 
             return create_block(size);
         }
 
-        inline size_t align_size(size_t size) const {
-            return (size + 1); 
-        }
-
     public:
-        Mem() {
-            init_allocator();
+        Mem() { init_allocator(); }
 
-            //default block
-            head = (Block*)((char*)memory + offset);
-            
-            head->size = DEFAULT_BLOCK_SIZE;
-            head->free = FREE; 
-            head->prev = nullptr;
-            
-            offset += sizeof(Block) + head->size;
-            head->offset = offset; 
-        }
-
-        ~Mem() {
-            munmap(memory, MEM_SIZE); //very sure thats enough and we dont need to free every pointer manually
-        }
+        ~Mem() { munmap(memory, MEM_SIZE); }
 
         void *mem_alloc(size_t size) {
-            if(size % 2 != 0) 
-                size = align_size(size); 
-
-            Block *bl = first_fit((size < MIN_BLOCK_SIZE ? MIN_BLOCK_SIZE : size));
-            bl->free = NOT_FREE;
-            
+            Block *bl = first_fit(size);
             return ((char*)memory + bl->offset - bl->size); //user memory
         }
 
         void mem_free(void *ptr) {
             Block *bl = (Block*)((char*)ptr - sizeof(Block));
-             
-            if(head->free) {
-                bl->free = FREE;
-                bl->prev = head;
-                head = bl; 
-                return; 
-            }
+        
+            currSizeClass = get_curr_size_class(bl->size); 
 
-            head->free = FREE; 
+            if(sizeClasses[currSizeClass] == nullptr)
+                sizeClasses[currSizeClass] = bl; 
+            else {
+                bl->next = sizeClasses[currSizeClass]; 
+                sizeClasses[currSizeClass] = bl; 
+            }
+            
+            return; 
         }
 };
 
