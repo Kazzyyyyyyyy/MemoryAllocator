@@ -15,7 +15,7 @@ class Mem {
             Block *next; 
         }; 
 
-        //                      16,      32,      64,      128,     256,     512,     1024     1024
+        //                      16,      32,      64,      128,     256,     512,     1024     1024<
         Block *sizeClasses[8] { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr }; 
         void *memory;
         size_t offset = 0;
@@ -67,7 +67,6 @@ class Mem {
 
     public:
         Mem() { init_allocator(); }
-
         ~Mem() { munmap(memory, MEM_SIZE); }
 
         void *mem_alloc(size_t size) {
@@ -86,8 +85,6 @@ class Mem {
                 bl->next = sizeClasses[currSizeClass]; 
                 sizeClasses[currSizeClass] = bl; 
             }
-            
-            return; 
         }
 };
 
