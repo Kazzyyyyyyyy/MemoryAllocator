@@ -5,23 +5,27 @@
 
 using namespace std; 
 
-//MODE: ALLOC_FAST (~25ns alloc time)
+//ALLOC_FAST: ~25ns alloc time
 template<const size_t MEM_SIZE = 16*1024*1024> 
-class Mem {
+class MemAllocator {
     private:
-
+    
         struct Block {
             size_t size, offset; 
             Block *next; 
-        }; 
+        };
 
-        //                      16,      32,      64,      128,     256,     512,     1024     1024<
-        Block *sizeClasses[8] { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr }; 
+        static constexpr    int8_t      SIZE_CLASS_NUM          = 8,
+                                        MIN_BLOCK_SIZE          = 4;
+
+        static constexpr    Block       *SIZE_CLASS_EMPTY       = nullptr; 
+        
+        //                                   16,      32,      64,      128,     256,     512,     1024     1024<
+        Block *sizeClasses[SIZE_CLASS_NUM] { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr }; // contains only free Blocks
         void *memory;
         size_t offset = 0;
-        int8_t currSizeClass = 0; 
 
-        void init_allocator() {
+        void get_memory() {
             memory = mmap(NULL, MEM_SIZE, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 
             if(memory == MAP_FAILED) {
@@ -30,7 +34,7 @@ class Mem {
             }
         }
 
-        inline int8_t get_curr_size_class(size_t size) const {
+        inline int8_t get_size_class(const size_t size) const {
             if(size <= 16) return 0; 
             else if(size <= 32) return 1; 
             else if(size <= 64) return 2; 
@@ -41,8 +45,8 @@ class Mem {
             else return 7;
         }
   
-        Block *create_block(size_t size) {
-            Block *bl = (Block*)((char*)memory + offset); 
+        Block *create_block(const size_t size) {
+            Block *bl = (Block*)((char*)memory + offset);
 
             bl->size = size; 
             bl->next = nullptr; 
@@ -53,37 +57,39 @@ class Mem {
             return bl;
         }
 
-        Block *first_fit(size_t size) {
-            currSizeClass = get_curr_size_class(size);
+        Block *first_fit(const size_t size) {
+            const int8_t sizeClass = get_size_class(size);
 
-            if(sizeClasses[currSizeClass] != nullptr) {
-                Block *tmp = sizeClasses[currSizeClass];
-                sizeClasses[currSizeClass] = tmp->next;
-                return tmp; 
-            }
+            if(sizeClasses[sizeClass] == SIZE_CLASS_EMPTY || sizeClasses[sizeClass]->size < size) 
+                return create_block(size); 
 
-            return create_block(size);
+            //remove Block from sizeClass and return
+            Block *ret = sizeClasses[sizeClass]; 
+            sizeClasses[sizeClass] = sizeClasses[sizeClass]->next; 
+            
+            return ret; 
         }
 
     public:
-        Mem() { init_allocator(); }
-        ~Mem() { munmap(memory, MEM_SIZE); }
+        MemAllocator() { get_memory(); }
+        ~MemAllocator() { munmap(memory, MEM_SIZE); }
 
-        void *mem_alloc(size_t size) {
-            Block *bl = first_fit(size);
+        void *mem_alloc(const size_t size) {
+            Block *bl = first_fit((size < MIN_BLOCK_SIZE ? MIN_BLOCK_SIZE : size));
             return ((char*)memory + bl->offset - bl->size); //user memory
         }
 
-        void mem_free(void *ptr) {
+        void mem_free(const void *ptr) {
             Block *bl = (Block*)((char*)ptr - sizeof(Block));
-        
-            currSizeClass = get_curr_size_class(bl->size); 
 
-            if(sizeClasses[currSizeClass] == nullptr)
-                sizeClasses[currSizeClass] = bl; 
+            //add block to sizeClass
+            const int8_t sizeClass = get_size_class(bl->size);
+
+            if(sizeClasses[sizeClass] == nullptr)
+                sizeClasses[sizeClass] = bl; 
             else {
-                bl->next = sizeClasses[currSizeClass]; 
-                sizeClasses[currSizeClass] = bl; 
+                bl->next = sizeClasses[sizeClass]; 
+                sizeClasses[sizeClass] = bl;
             }
         }
 };
