@@ -1,6 +1,7 @@
 #include <sys/mman.h> 
 #include <stddef.h>
 #include <stdio.h>
+#include <cstdint>
 #include <iostream>
 
 using namespace std; 
@@ -16,7 +17,7 @@ class MemAllocator {
             bool free;
         };
         
-        static constexpr    int8_t      SIZE_CLASS_NUM          = 20,
+        static constexpr    uint8_t     SIZE_CLASS_NUM          = 20,
                                         MIN_BLOCK_SIZE          = 4;
 
         static constexpr    bool        FREE                    = true,
@@ -39,7 +40,7 @@ class MemAllocator {
             }
         }
     
-        inline int8_t get_size_class(const size_t size) const {
+        inline uint8_t get_size_class(const size_t size) const {
             if(size <= 4) return 0; 
             else if(size <= 8) return 1;
             else if(size <= 16) return 2;
@@ -74,7 +75,7 @@ class MemAllocator {
             return bl;
         }
 
-        void remove_block_from_class(const Block *bl, const int8_t sizeClass) {
+        void remove_block_from_class(const Block *bl, const uint8_t sizeClass) {
             Block *dummy = (Block*)((char*)memory + offset); 
             dummy->next = sizeClasses[sizeClass];
             Block *tmp = dummy; 
@@ -91,7 +92,7 @@ class MemAllocator {
         }
 
         void add_block_to_class(Block *bl) {
-            const int8_t sizeClass = get_size_class(bl->size);
+            const uint8_t sizeClass = get_size_class(bl->size);
             if(sizeClasses[sizeClass] == SIZE_CLASS_EMPTY)
                 bl->next = nullptr; //gets done in the code alr, but better be sure
             else 
@@ -104,7 +105,7 @@ class MemAllocator {
             if(bl->size < MIN_BLOCK_SIZE + sizeof(Block) + size) //block big enough to split? 
                 return nullptr; 
 
-            const int8_t sizeClass = get_size_class(bl->size); 
+            const uint8_t sizeClass = get_size_class(bl->size); 
             
             //create and init 'nbl' at the end of 'bl'
             Block *nbl = (Block*)((char*)memory + bl->offset - (sizeof(Block) + size));
@@ -144,7 +145,7 @@ class MemAllocator {
         }
 
         Block *first_fit(const size_t size) {
-            const int8_t sizeClass = get_size_class(size); 
+            const uint8_t sizeClass = get_size_class(size); 
             if(sizeClasses[sizeClass] == SIZE_CLASS_EMPTY) 
                 return nullptr; 
             
@@ -164,7 +165,7 @@ class MemAllocator {
         }
 
         Block *best_fit(const size_t size) {
-            const int8_t sizeClass = get_size_class(size); 
+            const uint8_t sizeClass = get_size_class(size); 
             if(sizeClasses[sizeClass] == SIZE_CLASS_EMPTY) 
                 return nullptr; 
 
@@ -191,7 +192,7 @@ class MemAllocator {
 
         Block *get_block(const size_t size) {
             Block *ret;
-            int8_t sizeClass = get_size_class(size);
+            uint8_t sizeClass = get_size_class(size);
 
             //the higher the sizeClass, the more the size can vary.
             //for lower classes, with 4-32b flucatuation, first_fit is efficient enough,

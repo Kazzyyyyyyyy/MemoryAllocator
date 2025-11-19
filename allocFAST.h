@@ -1,5 +1,6 @@
 #include <sys/mman.h> 
 #include <stddef.h>
+#include <cstdint>
 #include <stdio.h>
 #include <iostream>
 
@@ -15,7 +16,7 @@ class MemAllocator {
             Block *next; 
         };
 
-        static constexpr    int8_t      SIZE_CLASS_NUM          = 8,
+        static constexpr    uint8_t     SIZE_CLASS_NUM          = 8,
                                         MIN_BLOCK_SIZE          = 4;
 
         static constexpr    Block       *SIZE_CLASS_EMPTY       = nullptr; 
@@ -34,7 +35,7 @@ class MemAllocator {
             }
         }
 
-        inline int8_t get_size_class(const size_t size) const {
+        inline uint8_t get_size_class(const size_t size) const {
             if(size <= 16) return 0; 
             else if(size <= 32) return 1; 
             else if(size <= 64) return 2; 
@@ -58,7 +59,7 @@ class MemAllocator {
         }
 
         Block *first_fit(const size_t size) {
-            const int8_t sizeClass = get_size_class(size);
+            const uint8_t sizeClass = get_size_class(size);
 
             if(sizeClasses[sizeClass] == SIZE_CLASS_EMPTY || sizeClasses[sizeClass]->size < size) 
                 return create_block(size); 
@@ -83,7 +84,7 @@ class MemAllocator {
             Block *bl = (Block*)((char*)ptr - sizeof(Block));
 
             //add block to sizeClass
-            const int8_t sizeClass = get_size_class(bl->size);
+            const uint8_t sizeClass = get_size_class(bl->size);
 
             if(sizeClasses[sizeClass] == nullptr)
                 sizeClasses[sizeClass] = bl; 
