@@ -6,8 +6,8 @@
 #include <cstring>
 
 
-// #define DEBUG 
-// #define TRACK_USE
+#define DEBUG 
+#define TRACK_USE
 
 
 enum Presets { FAST, PRECISE }; 
@@ -18,11 +18,10 @@ class MemAllocator;
 template<const size_t MEM_SIZE>
 class MemAllocator<FAST, MEM_SIZE> {
 
-#ifdef DEBUG 
-    public: 
-#else  
     private: 
-#endif 
+        #ifdef DEBUG 
+            friend class AllocAndFree; 
+        #endif
 
         struct Block {
             size_t size, offset; 
@@ -100,15 +99,31 @@ class MemAllocator<FAST, MEM_SIZE> {
             return ret; 
         }
 
-#ifndef DEBUG 
+        inline bool size_control(size_t &size) {
+            if(size < MIN_BLOCK_SIZE) {  
+                size = MIN_BLOCK_SIZE; 
+            }
+            
+            return size + sizeof(Block) <= MEM_SIZE - offset; 
+        }
+        
+        
+        #ifdef DEBUG 
+            inline size_t fast_block_size() const {
+                return sizeof(Block); 
+            }
+        #endif 
+
     public:
-#endif 
 
         MemAllocator() { memory = get_memory(MEM_SIZE); }
         ~MemAllocator() { munmap(memory, MEM_SIZE); }
 
-        void *mem_alloc(const size_t size) {
-            Block *bl = first_fit((size < MIN_BLOCK_SIZE ? MIN_BLOCK_SIZE : size)); 
+        void *mem_alloc(size_t size) {
+            if(!size_control(size)) 
+                return nullptr; 
+            
+            Block *bl = first_fit(size); 
             
             #ifdef TRACK_USE
                 memAlloc++;
@@ -116,12 +131,12 @@ class MemAllocator<FAST, MEM_SIZE> {
             
             return (char*)bl + sizeof(Block); // user memory
         }
-
-        void mem_free(const void *ptr) {
-            if(!ptr || ptr < memory || ptr > (char*)memory + MEM_SIZE) 
-                return; 
-
-            
+     
+        bool mem_free(void *ptr) {
+            // check for null or foreign ptr
+            if(!ptr || ptr < memory || ptr > (char*)memory + MEM_SIZE) // no double free check
+                return false; 
+                
             Block *bl = (Block*)((char*)ptr - sizeof(Block));
 
             // add Block to sizeClass
@@ -134,10 +149,12 @@ class MemAllocator<FAST, MEM_SIZE> {
                 bl->next = sizeClasses[sizeClass]; 
                 sizeClasses[sizeClass] = bl; 
             } 
-            
+                
             #ifdef TRACK_USE
                 memFree++;
-            #endif 
+            #endif
+            
+            return true; 
         }
 
         void *mem_realloc(void *ptr, size_t size) {
@@ -149,9 +166,9 @@ class MemAllocator<FAST, MEM_SIZE> {
             if(!ptr) 
                 return mem_alloc(size < MIN_BLOCK_SIZE ? MIN_BLOCK_SIZE : size); 
             
-            if(size < MIN_BLOCK_SIZE) 
-                size = MIN_BLOCK_SIZE;
-            
+            if(!size_control(size))
+                return nullptr;
+
             
             Block *bl = (Block*)((char*)ptr - sizeof(Block)); 
 
@@ -161,7 +178,7 @@ class MemAllocator<FAST, MEM_SIZE> {
             // shrink in place
             if(size < bl->size) {
                 const size_t tmpOffset = bl->offset;
-                bl->offset -= bl->size - size; // <--- (possible) BLOCK FRAGMENTATION HERE
+                bl->offset -= bl->size - size; // <--- BLOCK FRAGMENTATION HERE
                 
                 if(tmpOffset == offset) 
                     offset = bl->offset;
@@ -193,12 +210,11 @@ class MemAllocator<FAST, MEM_SIZE> {
 
 template<const size_t MEM_SIZE>
 class MemAllocator<PRECISE, MEM_SIZE> {
-
-#ifdef DEBUG 
-    public: 
-#else
+ 
     private: 
-#endif 
+        #ifdef DEBUG 
+            friend class AllocAndFree; 
+        #endif 
 
         struct Block {
             size_t size, offset;
@@ -346,7 +362,7 @@ class MemAllocator<PRECISE, MEM_SIZE> {
         
         void coalescing(Block* bl) {
             // cant be any Block infront of bl
-            if(bl->offset == offset) ///---------------------------------------------------------------------
+            if(bl->offset == offset) 
                 return; 
 
             // get next block after bl
@@ -450,9 +466,7 @@ class MemAllocator<PRECISE, MEM_SIZE> {
             return (ret ? ret : create_block(size));
         }
 
-#ifndef DEBUG
     public:
-#endif 
 
         MemAllocator() { get_memory(); }
         ~MemAllocator() { munmap(memory, MEM_SIZE); }
