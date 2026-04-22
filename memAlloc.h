@@ -39,10 +39,16 @@ class MemAllocator<FAST, MEM_SIZE> {
 
         // all these get incremented only when the function was successful
         #ifdef TRACK_USE 
-            uint32_t    createBlock     =    0,
-                        firstFit        =    0,
-                        memAlloc        =    0, 
-                        memFree         =    0;
+            size_t      createBlock                 =       0,
+                        firstFit                    =       0,
+                        bestFit                     =       0,
+                        memAlloc                    =       0, 
+                        memFree                     =       0, 
+                        removeBlockFromClass        =       0,
+                        addBlockToClass             =       0,
+                        splitDone                   =       0,
+                        coalescingDone              =       0; 
+
         #endif 
 
         void *get_memory(const size_t size) {
@@ -65,8 +71,60 @@ class MemAllocator<FAST, MEM_SIZE> {
             else if(size <= 1024)   return 6;
             else                    return 7;
         }
-  
+        
+        inline bool size_control(size_t &size) {
+            if(size < MIN_BLOCK_SIZE) {  
+                size = MIN_BLOCK_SIZE; 
+            }
+            
+            return size + sizeof(Block) <= MEM_SIZE - offset; 
+        }
+        
+        void remove_block_from_class(const Block *bl, const uint8_t sizeClass) {
+            Block *tmp = sizeClasses[sizeClass]; 
+
+            // we cant use the standard dummy method here because in case all memory is used making a new dumm block leads to a segfault 
+            if(tmp->offset == bl->offset) {
+                sizeClasses[sizeClass] = tmp->next; 
+                return; 
+            }
+
+            Block *tmp2 = tmp; 
+            while(tmp2->next) {
+                if(tmp2->next->offset == bl->offset) { // every block has a unique offset so we can use it for identification
+                    tmp2->next = tmp2->next->next; 
+                    break; 
+                }
+
+                tmp2 = tmp2->next;
+            }
+
+            sizeClasses[sizeClass] = tmp; 
+
+            #ifdef TRACK_USE 
+                removeBlockFromClass++; 
+            #endif 
+        }
+
+        void add_block_to_class(Block *bl) {
+            const uint8_t sizeClass = get_size_class(bl->size);
+            if(sizeClasses[sizeClass] == SIZE_CLASS_EMPTY) 
+                bl->next = nullptr;
+            else 
+                bl->next = sizeClasses[sizeClass];
+            
+            sizeClasses[sizeClass] = bl;
+            
+            #ifdef TRACK_USE 
+                addBlockToClass++; 
+            #endif 
+        }   
+
         Block *create_block(const size_t size) {
+            // enough space to create new Block?
+            if(size + sizeof(Block) > MEM_SIZE - offset) 
+                return nullptr; 
+
             Block *bl = (Block*)((char*)memory + offset);
 
             bl->size = size; 
@@ -82,35 +140,119 @@ class MemAllocator<FAST, MEM_SIZE> {
             return bl;
         }
 
-        Block *first_fit(const size_t size) {
-            const uint8_t sizeClass = get_size_class(size);
+        Block *split(Block *bl, const size_t size) {
+            if(bl->size < MIN_BLOCK_SIZE + sizeof(Block) + size) // block big enough to split?
+                return nullptr; 
 
-            if(sizeClasses[sizeClass] == SIZE_CLASS_EMPTY || sizeClasses[sizeClass]->size < size) 
-                return create_block(size); 
+            //std::cout << "split1; " << bl->size << std::endl; 
+            const uint8_t sizeClass = get_size_class(bl->size); 
+            
+            // create and init nbl at the end of bl
+            Block *nbl = (Block*)((char*)memory + bl->offset - (sizeof(Block) + size));
+            nbl->size = size; 
+            nbl->offset = bl->offset;
+            nbl->next = nullptr; 
 
-            // remove Block from sizeClass and return
-            Block *ret = sizeClasses[sizeClass]; 
-            sizeClasses[sizeClass] = sizeClasses[sizeClass]->next;
-             
-            #ifdef TRACK_USE
-                firstFit++;
+            // remove bl from sizeClasses 
+            sizeClasses[sizeClass] = bl->next; // thats okay, because bl is always the first member of the sizeClass
+
+            // set new data for bl after splitting
+            bl->size -= (sizeof(Block) + size); 
+            bl->offset -= (sizeof(Block) + size);
+            bl->next = nullptr;  
+            
+            // sort bl back into sizeClasses
+            const uint8_t newSizeClass = get_size_class(bl->size);
+            if(sizeClasses[newSizeClass] == SIZE_CLASS_EMPTY) 
+                bl->next = nullptr;
+            else 
+                bl->next = sizeClasses[newSizeClass];
+            
+            sizeClasses[newSizeClass] = bl;
+            
+            #ifdef TRACK_USE 
+                splitDone++; 
             #endif 
             
-            return ret; 
+            return nbl;
+        }
+        
+        Block *first_fit(const size_t size) {
+            const uint8_t sizeClass = get_size_class(size); 
+            if(sizeClasses[sizeClass] == SIZE_CLASS_EMPTY) 
+                return nullptr; 
+ 
+            Block *tmp = sizeClasses[sizeClass]; 
+
+            // look for valid Block
+            while(tmp != nullptr) {
+                if(tmp->size >= size) {
+                    #ifdef TRACK_USE 
+                        firstFit++; 
+                    #endif 
+                   
+                    remove_block_from_class(tmp, sizeClass); 
+
+                    return tmp; 
+                }
+
+                tmp = tmp->next; 
+            }
+
+            // no Block found
+            return nullptr;
         }
 
-        inline bool size_control(size_t &size) {
-            if(size < MIN_BLOCK_SIZE) {  
-                size = MIN_BLOCK_SIZE; 
+        Block *get_block(const size_t size) {           
+            Block *ret = first_fit(size);
+ 
+            // best -/ first_fit wasn't able to find a block
+            // look in higher sizeClasses for a Block to split
+            if(!ret) {
+                uint8_t sizeClass = get_size_class(size * 2); 
+                for(; sizeClass < SIZE_CLASS_NUM; sizeClass++) {
+                    if(sizeClasses[sizeClass] != SIZE_CLASS_EMPTY) {
+                        ret = split(sizeClasses[sizeClass], size);
+                        
+                        if(ret) 
+                            break;
+                    }
+                }
             }
-            
-            return size + sizeof(Block) <= MEM_SIZE - offset; 
+        
+            // if first_fit & splitting failed, try creating a new block
+            if(!ret) 
+                return create_block(size); 
+
+            return ret; 
+
+            //return (ret ? ret : create_block(size));
         }
-        
-        
+
         #ifdef DEBUG 
             inline size_t fast_block_size() const {
                 return sizeof(Block); 
+            }
+
+            void print_size_classes() {
+                for(int i = 0; i < 8; i++) {
+                    std::cout << std::endl << i << " - ";
+                    if(sizeClasses[i] == SIZE_CLASS_EMPTY)  {
+                        std::cout << "empty";
+                        continue;
+                    }
+
+
+                    Block *tmp = sizeClasses[i]; 
+ 
+                    while(tmp != nullptr) {
+                        
+                        std::cout << tmp->size << ", "; 
+                        tmp = tmp->next; 
+                    }
+                }
+
+                std::cout << "\n\n"; 
             }
         #endif 
 
@@ -120,10 +262,11 @@ class MemAllocator<FAST, MEM_SIZE> {
         ~MemAllocator() { munmap(memory, MEM_SIZE); }
 
         void *mem_alloc(size_t size) {
-            if(!size_control(size)) 
+            Block *bl = get_block((size < MIN_BLOCK_SIZE ? MIN_BLOCK_SIZE : size));
+
+            if(!bl) 
                 return nullptr; 
-            
-            Block *bl = first_fit(size); 
+
             
             #ifdef TRACK_USE
                 memAlloc++;
@@ -134,22 +277,13 @@ class MemAllocator<FAST, MEM_SIZE> {
      
         bool mem_free(void *ptr) {
             // check for null or foreign ptr
-            if(!ptr || ptr < memory || ptr > (char*)memory + MEM_SIZE) // no double free check
+            if(!ptr || ptr < memory || ptr > (char*)memory + MEM_SIZE) 
                 return false; 
                 
             Block *bl = (Block*)((char*)ptr - sizeof(Block));
 
-            // add Block to sizeClass
-            const uint8_t sizeClass = get_size_class(bl->size);
+            add_block_to_class(bl); 
 
-            if(sizeClasses[sizeClass] == SIZE_CLASS_EMPTY) {
-                sizeClasses[sizeClass] = bl; 
-            }
-            else {
-                bl->next = sizeClasses[sizeClass]; 
-                sizeClasses[sizeClass] = bl; 
-            } 
-                
             #ifdef TRACK_USE
                 memFree++;
             #endif
@@ -157,18 +291,20 @@ class MemAllocator<FAST, MEM_SIZE> {
             return true; 
         }
 
+
+        /////////////////////////////////////////
         void *mem_realloc(void *ptr, size_t size) {
             if(size == 0) {
                 mem_free(ptr); 
                 return nullptr; 
             }
-            
-            if(!ptr) 
-                return mem_alloc(size < MIN_BLOCK_SIZE ? MIN_BLOCK_SIZE : size); 
-            
+
             if(!size_control(size))
                 return nullptr;
-
+            
+            if(!ptr) 
+                return mem_alloc(size); 
+            
             
             Block *bl = (Block*)((char*)ptr - sizeof(Block)); 
 

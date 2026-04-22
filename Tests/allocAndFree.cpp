@@ -15,9 +15,9 @@ class AllocAndFree {
     private: 
         friend class Tests;
 
-        /*static  inline */ size_t     FAST_BLOCK_SIZE; 
-        /*static  inline*/  int        CHAR_TEST_AMNT; 
-        /*static  inline*/  int        STRING_TEST_AMNT;
+        size_t     FAST_BLOCK_SIZE; 
+        int        CHAR_TEST_AMNT; 
+        int        STRING_TEST_AMNT;
 
         inline size_t ran(size_t min = 0, size_t max = SIZE_MAX) const {
             static random_device rd;
@@ -70,7 +70,7 @@ class AllocAndFree {
         pair<bool, int> trade_alloc_and_free() {
             MemAllocator mem = get_alloc_instance(); 
             
-            char *curr = (char*)mem.mem_alloc(sizeof(char)); // this address should be the only we get in this whole test
+            char *curr = (char*)mem.mem_alloc(sizeof(char)); // this address should be the only one we get in this whole test
             char *original = curr; 
             
             for(int i = 0; i < CHAR_TEST_AMNT; i++) {
@@ -83,7 +83,7 @@ class AllocAndFree {
 
             // check if all frees and allocs where sucessful 
             if(mem.memFree != CHAR_TEST_AMNT || mem.memAlloc != CHAR_TEST_AMNT + 1)
-                return { false, 1};
+        	    return { false, 1};
 
             return { true, -1 }; 
         }
@@ -139,47 +139,119 @@ class AllocAndFree {
             }
             
             if(mem.offset != byteAlloc) 
-                return { false, 0 }; 
+                return { false, 0 };
             
             return { true, -1 }; 
         }
 
         pair<bool, int> max_alloc_and_free() { 
-            MemAllocator mem = get_alloc_instance(); 
-            size_t byteAlloc = 0; 
-
-            char *a = (char*)mem.mem_alloc(Data::MEM_SIZE - FAST_BLOCK_SIZE); 
-            if(!a)
-                return { false, 0 };
-
-            byteAlloc = Data::MEM_SIZE; 
-            if(byteAlloc != mem.offset)
-                return { false, 1 };
+            MemAllocator mem = get_alloc_instance();
             
-            if(mem.mem_alloc(1))
-                return { false, 2 };
+            static const size_t maxAlloc = Data::MEM_SIZE - FAST_BLOCK_SIZE; 
+            size_t byteAlloc = 0,
+                   freed     = 0; 
 
-            if(!mem.mem_free(a) && mem.offset > 0)
-                return { false, 3 };
-                       
+            vector<void*> v; 
+
+            for(int i = 0; i < 10'000'000; i++) {
+                switch(ran(0, 1)) {
+                    // alloc
+                    case 0:{ 
+                        // try alloc even though full
+                        if(byteAlloc == Data::MEM_SIZE) {
+                            if(mem.mem_alloc(maxAlloc)) 
+                                return { false, 0 }; 
+
+                            break; 
+                        }
+
+                        // allocate 
+                        v.push_back(mem.mem_alloc(maxAlloc)); 
+                        byteAlloc = maxAlloc + FAST_BLOCK_SIZE; 
+
+                        if(!v[freed]) 
+                            return { false, 1 }; 
+                        
+                        break; 
+                    }
+
+                    case 1:{
+                        // nothing to free 
+                        if(byteAlloc == 0) 
+                            break; 
             
-            return { true, -1 };
+                        // free 
+                        if(!mem.mem_free(v[freed])) 
+                            return { false, 2 }; 
+                        
+                        freed++;  
+                        byteAlloc = 0; 
+                    }
+                }
+            }
+
+            if(freed != mem.memFree) 
+                return { false, 3 }; 
+
+            return { true, -1 }; 
         }
 
+        //pair<bool, int> max_alloc_and_split() {}
+        
+
+        //void read_data() {
+        //    cout << FAST_BLOCK_SIZE << endl; 
+        //    cout << CHAR_TEST_AMNT << endl; 
+        //    cout << STRING_TEST_AMNT << endl; 
+        //}
+        
+        //void remove_block_from_class() {
+        //    MemAllocator mem = get_alloc_instance();
+        //    vector<int*> v; 
+
+        //    for(int i = 10; i >= 0; i--) 
+        //        v.push_back((int*)mem.mem_alloc(i + 100));
+        //        
+        //    mem.print_size_classes(); 
+
+        //    for(int* a : v) 
+        //        mem.mem_free(a); 
+
+        //    mem.print_size_classes(); 
+        //
+
+        //    int *a = (int*)mem.mem_alloc(101);
+        //    int *b = (int*)mem.mem_alloc(104);
+        //    int *c = (int*)mem.mem_alloc(109);
+
+        //    mem.print_size_classes(); 
+        //    
+        //}
 
         ///TODO: 
-        /* 
-            - more tests (max_alloc_and_free, boundary checks, and more i cant think of rn) 
-            - find a solution for the stupid static vars like FAST_BLOCK_SIZE 
+        /*
+            - solve remove_block_from_class segfault problem X
+            - make a good data system for FAST_BLOCK_SIZE and so on 
+            - complete max_alloc_and_free()
+
+            - max_alloc_and_split... 
+            - add seeds to randomizer
+            - cleanup code 
         */
 
     public: 
         AllocAndFree() {
-            // init static vars
+            // init vars
             MemAllocator mem; 
 
-            FAST_BLOCK_SIZE = mem.fast_block_size();  
+            FAST_BLOCK_SIZE = mem.fast_block_size(); 
             CHAR_TEST_AMNT = Data::MEM_SIZE / (FAST_BLOCK_SIZE + mem.MIN_BLOCK_SIZE) * 0.9; 
             STRING_TEST_AMNT = Data::MEM_SIZE / (FAST_BLOCK_SIZE + sizeof(string)) * 0.9; 
         }; 
 }; 
+
+
+
+
+
+

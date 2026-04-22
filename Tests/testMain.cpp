@@ -18,12 +18,14 @@ class Tests {
 
     public: 
         void run_tests() {
-            // output(aaf.pure_alloc());
-            // output(aaf.alloc_and_free());
-            // output(aaf.trade_alloc_and_free());
-            // output(aaf.invalid_ptr_free());
-            // output(aaf.random_type_alloc());
+            //output(aaf.pure_alloc());
+            //output(aaf.alloc_and_free());
+            //output(aaf.trade_alloc_and_free());
+            //output(aaf.invalid_ptr_free());
+            //output(aaf.random_type_alloc());
             output(aaf.max_alloc_and_free()); 
+            
+
         }
 
 }; 
