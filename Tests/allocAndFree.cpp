@@ -8,12 +8,15 @@
 #include <cstdint>
 #include <memory> 
 #include <random> 
+#include <cmath> 
 
 using namespace std; 
 
 class AllocAndFree {
     private: 
         friend class Tests;
+
+        size_t     randSeed; 
 
         size_t     FAST_BLOCK_SIZE; 
         int        CHAR_TEST_AMNT; 
@@ -26,8 +29,8 @@ class AllocAndFree {
             return dist(gen);
         }
 
-        inline MemAllocator<FAST, Data::MEM_SIZE> get_alloc_instance() const {
-            return MemAllocator<FAST, Data::MEM_SIZE>();
+        inline MemAllocator<Data::MEM_SIZE> get_alloc_instance() const {
+            return MemAllocator<Data::MEM_SIZE>();
         }
 
         pair<bool, int> pure_alloc() {
@@ -45,7 +48,7 @@ class AllocAndFree {
             }
             
             // all allocs completed?
-            if(mem.memAlloc != CHAR_TEST_AMNT) 
+            if(mem.memAllocDone != CHAR_TEST_AMNT) 
                 return { false, 1 }; 
             
             return { true, -1 }; 
@@ -61,7 +64,7 @@ class AllocAndFree {
             for(char *x : v) 
                 mem.mem_free(x); 
                
-            if(mem.memFree != CHAR_TEST_AMNT)
+            if(mem.memFreeDone != CHAR_TEST_AMNT)
                 return { false, 0 }; 
             
             return { true, -1 }; 
@@ -82,7 +85,7 @@ class AllocAndFree {
             }
 
             // check if all frees and allocs where sucessful 
-            if(mem.memFree != CHAR_TEST_AMNT || mem.memAlloc != CHAR_TEST_AMNT + 1)
+            if(mem.memFreeDone != CHAR_TEST_AMNT || mem.memAllocDone != CHAR_TEST_AMNT + 1)
         	    return { false, 1};
 
             return { true, -1 }; 
@@ -99,7 +102,7 @@ class AllocAndFree {
             if(mem.mem_free(b.get())) 
                 return { false, 1 }; 
 
-            if(mem.memFree > 0) 
+            if(mem.memFreeDone > 0) 
                 return { false, 2 }; 
 
             return { true, -1 }; 
@@ -113,22 +116,22 @@ class AllocAndFree {
                 switch(ran(0, 4)) {
                     case 0: 
                         mem.mem_alloc(sizeof(char));
-                        byteAlloc += FAST_BLOCK_SIZE + mem.MIN_BLOCK_SIZE; // char < MIN_BLOCK_SIZE
+                        byteAlloc += FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY; // char < MIN_BLOCK_SIZE
                         break; 
 
                     case 1: 
                         mem.mem_alloc(sizeof(int));
-                        byteAlloc += FAST_BLOCK_SIZE + sizeof(int); 
+                        byteAlloc += FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY; // char < MIN_BLOCK_SIZE; 
                         break;
                     
                     case 2: 
                         mem.mem_alloc(sizeof(size_t));
-                        byteAlloc += FAST_BLOCK_SIZE + sizeof(size_t); 
+                        byteAlloc += FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY; // char < MIN_BLOCK_SIZE; 
                         break;
                     
                     case 3: 
                         mem.mem_alloc(24); 
-                        byteAlloc += FAST_BLOCK_SIZE + 24; 
+                        byteAlloc += FAST_BLOCK_SIZE + 32; 
                         break;
                     
                     case 4:     
@@ -190,53 +193,168 @@ class AllocAndFree {
                 }
             }
 
-            if(freed != mem.memFree) 
+            if(freed != mem.memFreeDone) 
                 return { false, 3 }; 
 
             return { true, -1 }; 
         }
 
-        //pair<bool, int> max_alloc_and_split() {}
-        
+        /////////////////////////////////////////////////////////////
+        pair<bool, int> max_alloc_and_split() {
+            MemAllocator mem = get_alloc_instance(); 
 
-        //void read_data() {
-        //    cout << FAST_BLOCK_SIZE << endl; 
-        //    cout << CHAR_TEST_AMNT << endl; 
-        //    cout << STRING_TEST_AMNT << endl; 
-        //}
-        
-        //void remove_block_from_class() {
-        //    MemAllocator mem = get_alloc_instance();
-        //    vector<int*> v; 
+            static const size_t maxAlloc = Data::MEM_SIZE - FAST_BLOCK_SIZE; 
+            static const int maxSplits = floor(Data::MEM_SIZE / (FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY)) - 1; // -1 because the maxAlloc block itself needs MIN_USER_MEMORY too
+            
+            // create max Block 
+            char *maxBlock = (char*)mem.mem_alloc(maxAlloc); 
+                
+            if(!maxBlock) 
+                return { false, 0 }; 
 
-        //    for(int i = 10; i >= 0; i--) 
-        //        v.push_back((int*)mem.mem_alloc(i + 100));
-        //        
-        //    mem.print_size_classes(); 
+            const uintptr_t blockBegin  = reinterpret_cast<uintptr_t>(maxBlock),
+                            blockEnd    = blockBegin + maxAlloc;
 
-        //    for(int* a : v) 
-        //        mem.mem_free(a); 
+            set<char*> s; 
+            s.insert(maxBlock); 
 
-        //    mem.print_size_classes(); 
-        //
+            // make Block viable for splitting through freeing it
+            if(!mem.mem_free(maxBlock)) 
+                return { false, 1 }; 
 
-        //    int *a = (int*)mem.mem_alloc(101);
-        //    int *b = (int*)mem.mem_alloc(104);
-        //    int *c = (int*)mem.mem_alloc(109);
 
-        //    mem.print_size_classes(); 
-        //    
-        //}
+            for(int i = 0; i < maxSplits * 2; i++) {
+                // split Block with size MIN_BLOCK_SIZE
+                char *ptr = (char*)mem.mem_alloc(mem.MIN_USER_MEMORY); 
+
+                // check if allocater splits more even though theres no space anymore
+                if(i >= maxSplits + 1) {
+                    if(ptr) 
+                        return { false, 2 }; 
+
+                    continue; 
+                } 
+
+                // check for nullptr
+                if(!ptr) 
+                    return { false, 3 }; 
+                
+                // split Block has correct size? 
+                pair<size_t, size_t> blockData = mem.get_block_data((void*)ptr);
+                if(i != maxSplits && blockData.first != mem.MIN_USER_MEMORY) 
+                    return { false, 4 };
+
+                // check if ptr is actually in the memory range of maxBlock
+                const uintptr_t ptri  = reinterpret_cast<uintptr_t>(ptr); 
+                if(ptri < blockBegin || ptri >= blockEnd) 
+                    return { false, 5 };
+
+                // check if allocator gave already used address
+                if(i != maxSplits && s.find(ptr) != s.end()) 
+                    return { false, 6 }; 
+
+                s.insert(ptr); 
+            }
+
+            return { true, -1 };
+        }
+
+
+        pair<bool, int> basic_allignment() {
+            MemAllocator mem = get_alloc_instance(); 
+            int sizes[] = { 16, 32, 48, 64, 128 }; 
+
+            for(int i = 0; i < Data::MEM_SIZE / (FAST_BLOCK_SIZE + 128) * 0.9; i++) {
+                int r = ran(0, 4); 
+
+                void *ptr = mem.mem_alloc(sizes[r]); 
+                        
+                if(!ptr) 
+                    return { false, 0 };
+                
+                uintptr_t ptri  = reinterpret_cast<uintptr_t>(ptr); 
+                
+                if(ptri % 16 != 0) 
+                    return { false, sizes[r] };
+
+            }
+
+            return { true, -1 };
+        }
+            
+        pair<bool, int> split_allignment() {
+            MemAllocator mem = get_alloc_instance(); 
+            
+            static const size_t maxAlloc = Data::MEM_SIZE - FAST_BLOCK_SIZE; 
+            static const int maxSplits = floor(maxAlloc / (FAST_BLOCK_SIZE + 64)) - 1; 
+
+            const uint8_t sizes[] = { 1, 3, 16, 28, 32, 41, 61 };
+
+            void *p = mem.mem_alloc(maxAlloc); 
+            
+            if(!p) 
+                return { false, 0 };
+
+            if(!mem.mem_free(p)) 
+                return { false, 1 };
+
+            for(int i = 0; i < maxSplits; i++) {
+                // split Block with size MIN_BLOCK_SIZE
+                uint8_t r = ran(0, 6); 
+                void *ptr = (char*)mem.mem_alloc(sizes[r]); 
+                uintptr_t ptri  = reinterpret_cast<uintptr_t>(ptr); 
+
+                if(ptri % 16 != 0) 
+                    return { false, sizes[r] };
+            } 
+
+            return { true, -1 };
+        }
+
+
+        pair<bool, int> test() {
+            MemAllocator mem = get_alloc_instance(); 
+
+            vector<void*> v; 
+            
+            for(int i = 9; i >= 0; i--) {
+                v.push_back(mem.mem_alloc(20 + i)); 
+            } 
+
+            for(void *p : v) 
+                mem.mem_free(p); 
+
+            mem.print_size_classes(); 
+            
+           // for(int i = 0; i < 10; i++) {
+           //     mem.mem_alloc(20 + i); 
+           //     mem.print_size_classes(); 
+           // }
+
+            mem.mem_alloc(20); 
+            mem.print_size_classes(); 
+            return { true, -1 }; 
+        }
+
 
         ///TODO: 
         /*
             - solve remove_block_from_class segfault problem X
-            - make a good data system for FAST_BLOCK_SIZE and so on 
-            - complete max_alloc_and_free()
+            - make a good data system for FAST_BLOCK_SIZE and so on X
+            - complete max_alloc_and_free() X
+            - max_alloc_and_split() X
+            - allocator allignment fixen X
+            - tests fix allignment chanegs X
+            - memory allignment test X
+            - size_control bitwise ops X
+            - make first fit not only search one sizeClass X
+            
 
-            - max_alloc_and_split... 
+            - cleanup code and think through logic again 
+            - coalescing...
+            - better output system? 
             - add seeds to randomizer
-            - cleanup code 
+            - performance benchmarks
         */
 
     public: 
@@ -245,8 +363,9 @@ class AllocAndFree {
             MemAllocator mem; 
 
             FAST_BLOCK_SIZE = mem.fast_block_size(); 
-            CHAR_TEST_AMNT = Data::MEM_SIZE / (FAST_BLOCK_SIZE + mem.MIN_BLOCK_SIZE) * 0.9; 
+            CHAR_TEST_AMNT = Data::MEM_SIZE / (FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY) * 0.9; 
             STRING_TEST_AMNT = Data::MEM_SIZE / (FAST_BLOCK_SIZE + sizeof(string)) * 0.9; 
+
         }; 
 }; 
 
