@@ -16,8 +16,6 @@ class AllocAndFree {
     private: 
         friend class Tests;
 
-        size_t     randSeed; 
-
         size_t     FAST_BLOCK_SIZE; 
         int        CHAR_TEST_AMNT; 
         int        STRING_TEST_AMNT;
@@ -66,6 +64,10 @@ class AllocAndFree {
                
             if(mem.memFreeDone != CHAR_TEST_AMNT)
                 return { false, 0 }; 
+
+            // check if coalescing worked correctly
+            if(mem.get_block_data(v[0]).first != CHAR_TEST_AMNT * (mem.MIN_USER_MEMORY + FAST_BLOCK_SIZE) - FAST_BLOCK_SIZE)
+                return { false, 1 };
             
             return { true, -1 }; 
         }
@@ -78,7 +80,7 @@ class AllocAndFree {
             
             for(int i = 0; i < CHAR_TEST_AMNT; i++) {
                 mem.mem_free(curr); // free => size class 
-                curr = (char*)mem.mem_alloc(sizeof(char)); // new alloc with same size => should give the same address
+                curr = (char*)mem.mem_alloc(sizeof(char)); // new alloc with same size => should give the same address ///////////////////////////////////// idk if works 
 
                 if(original != curr)
                     return { false, 0 }; 
@@ -94,12 +96,12 @@ class AllocAndFree {
         pair<bool, int> invalid_ptr_free() {
             MemAllocator mem = get_alloc_instance(); 
 
-            unique_ptr<char> a(nullptr); 
-            if(mem.mem_free(a.get()))
+            char *a = nullptr; 
+            if(mem.mem_free(a))
                 return { false, 0 };  
 
-            unique_ptr<char> b(new char()); 
-            if(mem.mem_free(b.get())) 
+            char *b = new char(); 
+            if(mem.mem_free(b)) 
                 return { false, 1 }; 
 
             if(mem.memFreeDone > 0) 
@@ -114,30 +116,35 @@ class AllocAndFree {
 
             for(int i = 0; i < STRING_TEST_AMNT; i++) {
                 switch(ran(0, 4)) {
-                    case 0: 
+                    case 0:{
                         mem.mem_alloc(sizeof(char));
                         byteAlloc += FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY; // char < MIN_BLOCK_SIZE
                         break; 
+                    }
 
-                    case 1: 
+                    case 1:{
                         mem.mem_alloc(sizeof(int));
-                        byteAlloc += FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY; // char < MIN_BLOCK_SIZE; 
+                        byteAlloc += FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY; // int < MIN_BLOCK_SIZE; 
                         break;
-                    
-                    case 2: 
+                    }
+
+                    case 2:{
                         mem.mem_alloc(sizeof(size_t));
-                        byteAlloc += FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY; // char < MIN_BLOCK_SIZE; 
+                        byteAlloc += FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY; // size_t < MIN_BLOCK_SIZE; 
                         break;
-                    
-                    case 3: 
+                    }
+
+                    case 3:{
                         mem.mem_alloc(24); 
                         byteAlloc += FAST_BLOCK_SIZE + 32; 
                         break;
-                    
-                    case 4:     
+                    }
+
+                    case 4:{  
                         mem.mem_alloc(sizeof(string));
                         byteAlloc += FAST_BLOCK_SIZE + sizeof(string); 
                         break;
+                    }
                 }
             }
             
@@ -199,12 +206,11 @@ class AllocAndFree {
             return { true, -1 }; 
         }
 
-        /////////////////////////////////////////////////////////////
         pair<bool, int> max_alloc_and_split() {
             MemAllocator mem = get_alloc_instance(); 
 
             static const size_t maxAlloc = Data::MEM_SIZE - FAST_BLOCK_SIZE; 
-            static const int maxSplits = floor(Data::MEM_SIZE / (FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY)) - 1; // -1 because the maxAlloc block itself needs MIN_USER_MEMORY too
+            static const int maxSplits = floor(Data::MEM_SIZE / (FAST_BLOCK_SIZE + mem.MIN_USER_MEMORY));
             
             // create max Block 
             char *maxBlock = (char*)mem.mem_alloc(maxAlloc); 
@@ -228,7 +234,7 @@ class AllocAndFree {
                 char *ptr = (char*)mem.mem_alloc(mem.MIN_USER_MEMORY); 
 
                 // check if allocater splits more even though theres no space anymore
-                if(i >= maxSplits + 1) {
+                if(i >= maxSplits) {
                     if(ptr) 
                         return { false, 2 }; 
 
@@ -241,7 +247,7 @@ class AllocAndFree {
                 
                 // split Block has correct size? 
                 pair<size_t, size_t> blockData = mem.get_block_data((void*)ptr);
-                if(i != maxSplits && blockData.first != mem.MIN_USER_MEMORY) 
+                if(i != maxSplits - 1 && blockData.first != mem.MIN_USER_MEMORY) 
                     return { false, 4 };
 
                 // check if ptr is actually in the memory range of maxBlock
@@ -250,7 +256,7 @@ class AllocAndFree {
                     return { false, 5 };
 
                 // check if allocator gave already used address
-                if(i != maxSplits && s.find(ptr) != s.end()) 
+                if(i != maxSplits - 1 && s.find(ptr) != s.end()) 
                     return { false, 6 }; 
 
                 s.insert(ptr); 
@@ -262,9 +268,11 @@ class AllocAndFree {
 
         pair<bool, int> basic_allignment() {
             MemAllocator mem = get_alloc_instance(); 
+            static const size_t maxAllocs = Data::MEM_SIZE / (FAST_BLOCK_SIZE + 128) * 0.9; 
+            
             int sizes[] = { 16, 32, 48, 64, 128 }; 
-
-            for(int i = 0; i < Data::MEM_SIZE / (FAST_BLOCK_SIZE + 128) * 0.9; i++) {
+            
+            for(int i = 0; i < maxAllocs; i++) {
                 int r = ran(0, 4); 
 
                 void *ptr = mem.mem_alloc(sizes[r]); 
@@ -299,8 +307,8 @@ class AllocAndFree {
                 return { false, 1 };
 
             for(int i = 0; i < maxSplits; i++) {
-                // split Block with size MIN_BLOCK_SIZE
-                uint8_t r = ran(0, 6); 
+                // split Block with random (potentially not aligned) size
+                const uint8_t r = ran(0, 6); 
                 void *ptr = (char*)mem.mem_alloc(sizes[r]); 
                 uintptr_t ptri  = reinterpret_cast<uintptr_t>(ptr); 
 
@@ -309,31 +317,31 @@ class AllocAndFree {
             } 
 
             return { true, -1 };
-        }
+        } 
 
-
-        pair<bool, int> test() {
+        pair<bool, int> prevSize_correctness() {
             MemAllocator mem = get_alloc_instance(); 
+                
+            int *a = (int*)mem.mem_alloc(512); 
+            mem.mem_free(a); 
 
-            vector<void*> v; 
+            int *b = (int*)mem.mem_alloc(32); 
+            int *c = (int*)mem.mem_alloc(16); 
+            int *d = (int*)mem.mem_alloc(1024); 
+         
+            if(mem.get_prevSize(a) != 0) 
+                return { false, 0 };
+
+            if(mem.get_prevSize(b) != 16) 
+                return { false, 1 };
             
-            for(int i = 9; i >= 0; i--) {
-                v.push_back(mem.mem_alloc(20 + i)); 
-            } 
-
-            for(void *p : v) 
-                mem.mem_free(p); 
-
-            mem.print_size_classes(); 
+            if(mem.get_prevSize(c) != 400) 
+                return { false, 2 };
             
-           // for(int i = 0; i < 10; i++) {
-           //     mem.mem_alloc(20 + i); 
-           //     mem.print_size_classes(); 
-           // }
+            if(mem.get_prevSize(d) != 32) 
+                return { false, 3 };
 
-            mem.mem_alloc(20); 
-            mem.print_size_classes(); 
-            return { true, -1 }; 
+            return { true, -1 };
         }
 
 
@@ -348,14 +356,56 @@ class AllocAndFree {
             - memory allignment test X
             - size_control bitwise ops X
             - make first fit not only search one sizeClass X
-            
+            - cleanup code and think through logic again X
+            - remove offset from Block struct X
+            - double free check X 
+            - free and *prevSize system X
+            - prevSize tests X ig
+            - coalescing... X 
+            - bool last_created_block() or block_at_offset() X
+            - cleanup code X
 
+            - coalescing, realloc, free rework and overhaul old tests 
+            - change vars like HEADER_SIZE to automatically set on start
+            - check if operations like bl->next = nullptr and bl->free = true/false can be reduced through architecture 
+            - remove_block_from_class is not always needed, check in coalescing and split if actually needed
             - cleanup code and think through logic again 
-            - coalescing...
             - better output system? 
             - add seeds to randomizer
             - performance benchmarks
+            - cleanup comments
         */
+
+        
+       /* Coalescing; 
+           size_t *prev_size; 
+        
+           then we can do (Block*)((char*)bl - bl->prevSize) for backwards and (Block*)((char*)bl + bl->size) for forwards coalescing 
+            
+           when we split, we just do Block *nnbl = (Block*)((char*)nbl + nbl->size); 
+                                            nnbl->prevSize = &nbl->size; 
+                                            and 
+                                            nbl->prevSize = &bl->size; 
+
+            when coalescing, only the last block counts and we dont need to change anything there. 
+            when create_block we take the global size_t *lastBlockSize and set bl->prevSize = lastBlockSize & lastBlockSize = &bl->size
+
+            for bool free we somehow need to use Block *next as an indicator to not waste annother 15b for padding (32b + sizeof(bool) + padding)
+        */
+         
+        /* prevSize 
+            global size_t *lastSize = nullptr; 
+
+            createBlock; 
+                bl->prevSize = lastSize; 
+                lastSize = &bl->size; 
+
+            split:
+                Block *nextBlock = (Block*)((char*)bl + bl->size + HEADER_SIZE); 
+                nextBlock->prevSize = &nbl->size; 
+          
+        */
+
 
     public: 
         AllocAndFree() {

@@ -28,7 +28,8 @@ class Tests {
             output(aaf.basic_allignment()); 
             output(aaf.split_allignment()); 
            
-            //aaf.test(); 
+            //output(aaf.prevSize_correctness()); 
+
         }
 
 }; 
